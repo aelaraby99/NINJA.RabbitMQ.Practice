@@ -1,0 +1,34 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>AllInOne.RabbitMQ.Producer.Console_App</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.3" />
+    <PackageReference Include="RabbitMQ.Client" Version="7.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.SharePoint">
+      <HintPath>C:\Users\ahmed.elaraby\Desktop\Microsoft.SharePoint.dll</HintPath>
+    </Reference>
+    <Reference Include="SourceCode.Data.SmartObjectsClient">
+      <HintPath>C:\Users\ahmed.elaraby\Desktop\SourceCode.Data.SmartObjectsClient.dll</HintPath>
+    </Reference>
+    <Reference Include="SourceCode.HostClientAPI">
+      <HintPath>C:\Users\ahmed.elaraby\Desktop\SourceCode.HostClientAPI.dll</HintPath>
+    </Reference>
+    <Reference Include="SourceCode.SmartObjects.Client">
+      <HintPath>C:\Users\ahmed.elaraby\Desktop\SourceCode.SmartObjects.Client.dll</HintPath>
+    </Reference>
+    <Reference Include="SourceCode.SmartObjects.Services.ServiceSDK">
+      <HintPath>C:\Users\ahmed.elaraby\Desktop\SourceCode.SmartObjects.Services.ServiceSDK.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

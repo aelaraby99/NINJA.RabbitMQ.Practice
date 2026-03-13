@@ -1,0 +1,6 @@
+@NINJA.RabbitMQ.Producer.API_HostAddress = http://localhost:5161
+
+GET {{NINJA.RabbitMQ.Producer.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
