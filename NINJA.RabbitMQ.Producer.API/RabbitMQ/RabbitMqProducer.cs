@@ -15,7 +15,7 @@ namespace NINJA.RabbitMQ.Producer.API.RabbitMQ
         public void SendMessage<T>(T message,string queueName,string exchangeName = "",string routingKey = "")
         {
             using var channel = _connection.Connection.CreateModel();
-            channel.QueueDeclare(queueName,durable: true,exclusive: false,autoDelete: false);
+            channel.QueueDeclare(queueName,durable: true,exclusive: false,autoDelete: true);
             // Enable publisher confirms to ensure message delivery
             channel.ConfirmSelect();
 
