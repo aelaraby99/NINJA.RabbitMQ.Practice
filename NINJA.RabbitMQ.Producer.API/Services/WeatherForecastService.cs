@@ -27,7 +27,7 @@ namespace NINJA.RabbitMQ.Producer.API.Services
             var weatherForecasts = GetWeatherForecasts();
             if (weatherForecasts is not null)
             {
-                _messageProducer.SendMessage(weatherForecasts,"weather-forecasts");
+                _messageProducer.SendMessage(weatherForecasts,"weather-forecasts",arguments: new Dictionary<string,object> { { "x-max-length",3 },{ "x-overflow","reject-publish" } });
                 return weatherForecasts;
             }
             return Enumerable.Empty<WeatherForecast>();

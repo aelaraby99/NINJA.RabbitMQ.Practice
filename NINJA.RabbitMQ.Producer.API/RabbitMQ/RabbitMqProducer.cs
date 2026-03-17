@@ -12,10 +12,10 @@ namespace NINJA.RabbitMQ.Producer.API.RabbitMQ
         {
             _connection = connection;
         }
-        public void SendMessage<T>(T message,string queueName,string exchangeName = "",string routingKey = "")
+        public void SendMessage<T>(T message,string queueName,string exchangeName = "",string routingKey = "",IDictionary<string,object> arguments = null)
         {
             using var channel = _connection.Connection.CreateModel();
-            channel.QueueDeclare(queueName,durable: true,exclusive: false,autoDelete: true);
+            //channel.QueueDeclare(queueName,durable: true,exclusive: false,autoDelete: true,arguments: arguments); // producer should only publish to an exchange, not declare queues. Queue declaration should be handled by the consumer or a separate setup process to avoid conflicts and ensure proper queue configuration.
             // Enable publisher confirms to ensure message delivery
             channel.ConfirmSelect();
 
@@ -40,6 +40,8 @@ namespace NINJA.RabbitMQ.Producer.API.RabbitMQ
                 mandatory: true,
                 basicProperties: properties,
                 body: body);
+            // Wait for confirmation of message delivery
+            channel.WaitForConfirmsOrDie(new TimeSpan(0,0,5)); // Wait for up to 5 seconds for confirmation
         }
     }
 }
