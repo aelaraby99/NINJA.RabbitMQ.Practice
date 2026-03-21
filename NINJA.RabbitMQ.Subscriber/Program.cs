@@ -27,6 +27,10 @@ namespace NINJA.RabbitMQ.Subscriber
                 durable: false,
                 exclusive: false,
                 autoDelete: false);
+            //channel.QueueBind(
+            //    queue: "weather-forecasts",
+            //    exchange: "weather-exchange",
+            //    routingKey: "forecast.*");
             for (int i = 1;i <= 3;i++)
             {
                 // fair dispatch

@@ -18,7 +18,6 @@ namespace NINJA.RabbitMQ.Producer.API.RabbitMQ
             //channel.QueueDeclare(queueName,durable: true,exclusive: false,autoDelete: true,arguments: arguments); // producer should only publish to an exchange, not declare queues. Queue declaration should be handled by the consumer or a separate setup process to avoid conflicts and ensure proper queue configuration.
             // Enable publisher confirms to ensure message delivery
             channel.ConfirmSelect();
-
             var json = JsonSerializer.Serialize(message);
             var body = Encoding.UTF8.GetBytes(json);
 

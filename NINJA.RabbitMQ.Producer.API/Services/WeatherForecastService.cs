@@ -22,7 +22,7 @@ namespace NINJA.RabbitMQ.Producer.API.Services
             })
            .ToList();
         }
-        public async Task<IEnumerable<WeatherForecast>> GetWeather()
+        public IEnumerable<WeatherForecast> GetWeather()
         {
             var weatherForecasts = GetWeatherForecasts();
             if (weatherForecasts is not null)

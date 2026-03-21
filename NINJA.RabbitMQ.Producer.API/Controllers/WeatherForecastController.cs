@@ -14,9 +14,9 @@ namespace NINJA.RabbitMQ.Producer.API.Controllers
         }
 
         [HttpGet(Name = "GetWeatherForecast")]
-        public async Task<IEnumerable<WeatherForecast>> Get()
+        public IEnumerable<WeatherForecast> Get()
         {
-            return await weatherForecastService.GetWeather();
+            return weatherForecastService.GetWeather();
         }
     }
 }
