@@ -2,6 +2,7 @@ using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using NINJA.RabbitMQ.Subscriber.RabbitMQ.Connection;
 using System.Text;
+
 namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
 {
     public class RabbitMqConsumer : IMessageConsumer, IDisposable
@@ -16,35 +17,45 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
             _channel = _connection.Connection.CreateModel();
         }
 
-        public void StartConsuming(string queueName, bool autoAck = false)
+        public void StartConsuming(string queueName, bool autoAck = false, Action<string>? messageHandler = null)
         {
             _queueName = queueName;
+
             // Declare queue
             _channel.QueueDeclare(
                 queue: queueName,
                 durable: false,
                 exclusive: false,
                 autoDelete: false);
+
             var consumer = new EventingBasicConsumer(_channel);
+
             consumer.Received += (sender, ea) =>
             {
                 var body = ea.Body.ToArray();
                 var message = Encoding.UTF8.GetString(body);
-                Console.WriteLine($"Consumer Received Message: {message}");
+                Console.WriteLine($"Consumer Received Message");
+
+                // Use the provided message handler if available, otherwise just log
+                messageHandler?.Invoke(message);
+
                 if (!autoAck)
                 {
                     _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
                 }
             };
+
             _channel.BasicConsume(
                 queue: queueName,
                 autoAck: autoAck,
                 consumer: consumer);
         }
+
         public void StopConsuming()
         {
             _channel?.Close();
         }
+
         public void Dispose()
         {
             _channel?.Dispose();

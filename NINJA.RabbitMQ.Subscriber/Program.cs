@@ -22,11 +22,13 @@ namespace NINJA.RabbitMQ.Subscriber
             var host = builder.Build();
 
             var consumer = host.Services.GetRequiredService<IMessageConsumer>();
+            var weatherService = host.Services.GetRequiredService<IWeatherForecastService>();
 
             Console.WriteLine("Starting RabbitMQ Subscriber...");
             Console.WriteLine("Press any key to stop.");
 
-            consumer.StartConsuming("weather-forecasts",autoAck: false);
+            // Use WeatherForecastService specifically for weather-forecasts queue
+            consumer.StartConsuming("weather-forecasts", autoAck: false, messageHandler: weatherService.ProcessWeatherForecast);
 
             Console.ReadKey();
 

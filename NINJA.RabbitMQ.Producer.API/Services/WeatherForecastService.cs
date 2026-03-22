@@ -1,4 +1,5 @@
 ﻿
+using NINJA.RabbitMQ.Producer.API.Data;
 using NINJA.RabbitMQ.Producer.API.RabbitMQ;
 
 namespace NINJA.RabbitMQ.Producer.API.Services

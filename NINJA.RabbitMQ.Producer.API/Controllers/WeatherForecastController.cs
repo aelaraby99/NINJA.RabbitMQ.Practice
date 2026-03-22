@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using NINJA.RabbitMQ.Producer.API.Data;
 using NINJA.RabbitMQ.Producer.API.Services;
 namespace NINJA.RabbitMQ.Producer.API.Controllers
 {
