@@ -30,6 +30,8 @@ namespace NINJA.RabbitMQ.Subscriber
             // Use WeatherForecastService specifically for weather-forecasts queue
             consumer.StartConsuming("weather-forecasts", autoAck: false, messageHandler: weatherService.ProcessWeatherForecast);
 
+            consumer.StartConsumingQuorum("critical-orders", autoAck: false);
+
             Console.ReadKey();
 
             consumer.StopConsuming();
