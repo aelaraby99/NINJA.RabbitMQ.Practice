@@ -7,6 +7,9 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
         void StartConsumingQuorum(string queueName, bool autoAck = false, Action<string>? messageHandler = null, 
             string deadLetterStrategy = "at-least-once", string overflow = "drop-head", int initialGroupSize = 0,
             string? deadLetterExchange = null);
+        void StartConsumingStream(string streamName, Action<string>? messageHandler = null, 
+            long retentionSize = 0, TimeSpan? retentionTime = null, int maxSegmentSize = 0,
+            string streamOffset = "last", ulong? specificOffset = null);
         void StopConsuming();
     }
 }

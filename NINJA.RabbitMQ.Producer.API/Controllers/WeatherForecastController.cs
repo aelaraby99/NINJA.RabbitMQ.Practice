@@ -19,5 +19,29 @@ namespace NINJA.RabbitMQ.Producer.API.Controllers
         {
             return weatherForecastService.GetWeather();
         }
+
+        [HttpGet("classic", Name = "GetWeatherForecastClassic")]
+        public IEnumerable<WeatherForecast> GetClassic()
+        {
+            return weatherForecastService.GetWeatherClassic();
+        }
+
+        [HttpGet("quorum", Name = "GetWeatherForecastQuorum")]
+        public IEnumerable<WeatherForecast> GetQuorum()
+        {
+            return weatherForecastService.GetWeatherQuorum();
+        }
+
+        [HttpGet("stream", Name = "GetWeatherForecastStream")]
+        public IEnumerable<WeatherForecast> GetStream()
+        {
+            return weatherForecastService.GetWeatherStream();
+        }
+
+        [HttpGet("quorum-dlx", Name = "GetWeatherForecastQuorumDLX")]
+        public IEnumerable<WeatherForecast> GetQuorumWithDLX()
+        {
+            return weatherForecastService.GetWeatherQuorumWithDLX();
+        }
     }
 }
