@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
 using NINJA.RabbitMQ.Subscriber.RabbitMQ;
@@ -15,10 +15,10 @@ namespace NINJA.RabbitMQ.Subscriber
             var builder = Host.CreateApplicationBuilder(args);
             builder.Configuration.AddJsonFile("appsettings.json",optional: false,reloadOnChange: true);
 
-            builder.Services.Configure<RabbitMqSettings>(builder.Configuration.GetSection("RabbitMQ"));
+            builder.Services.AddOptions<RabbitMqSettings>().BindConfiguration(RabbitMqSettings.SectionName).ValidateOnStart();
             builder.Services.AddSingleton<IRabbitMqConnection,RabbitMqConnection>();
             builder.Services.AddSingleton<IStreamOffsetStrategyFactory,StreamOffsetStrategyFactory>();
-            builder.Services.AddScoped<IMessageConsumer,RabbitMqConsumer>();
+            builder.Services.AddTransient<IMessageConsumer,RabbitMqConsumer>();
             builder.Services.AddScoped<IWeatherForecastService,WeatherForecastService>();
 
             var host = builder.Build();
@@ -35,6 +35,7 @@ namespace NINJA.RabbitMQ.Subscriber
             var quorumDLXConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
             var originalConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
             var criticalOrdersConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
+            var criticalOrdersDLQConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
 
             // Classic queue consumer - matches producer endpoint
             classicConsumer.StartConsuming("classic-weather-forecasts",autoAck: false,messageHandler: weatherService.ProcessWeatherForecast);
@@ -60,7 +61,7 @@ namespace NINJA.RabbitMQ.Subscriber
                     weatherService.ProcessWeatherForecast(msg);
                 },
                 retentionSize: 1073741824, // 1GB
-                retentionTime: TimeSpan.FromHours(0.25), // 24h
+                retentionTime: TimeSpan.FromHours(24), // 24h
                 maxSegmentSize: 1048576, // 1MB
                 streamOffset: "first" // Consume all existing messages
             );
@@ -92,11 +93,12 @@ namespace NINJA.RabbitMQ.Subscriber
                 },
                 deadLetterExchange: "critical-orders.dlx"
                );
-            criticalOrdersConsumer.StartConsuming("critical-orders.dlq",
-                autoAck: false,messageHandler: msg =>
-           {
-               Console.WriteLine($"💀 DLQ Received: {msg}");
-           });
+            criticalOrdersDLQConsumer.StartConsuming("critical-orders.dlq",
+                autoAck: false,
+                messageHandler: msg =>
+                {
+                    Console.WriteLine($"💀 DLQ Received: {msg}");
+                });
 
             Console.WriteLine("All consumers started successfully!");
             Console.WriteLine("Active consumers:");
@@ -105,6 +107,8 @@ namespace NINJA.RabbitMQ.Subscriber
             Console.WriteLine("  - Stream: stream-weather-forecasts");
             Console.WriteLine("  - Quorum+DLX: quorum-dlx-weather");
             Console.WriteLine("  - Original: weather-forecasts");
+            Console.WriteLine("  - Critical Orders: critical-orders");
+            Console.WriteLine("  - Critical Orders DLQ: critical-orders.dlq");
 
             Console.ReadKey();
 
@@ -114,6 +118,8 @@ namespace NINJA.RabbitMQ.Subscriber
             streamConsumer.StopConsuming();
             quorumDLXConsumer.StopConsuming();
             originalConsumer.StopConsuming();
+            criticalOrdersConsumer.StopConsuming();
+            criticalOrdersDLQConsumer.StopConsuming();
 
             Console.WriteLine("All consumers stopped.");
         }

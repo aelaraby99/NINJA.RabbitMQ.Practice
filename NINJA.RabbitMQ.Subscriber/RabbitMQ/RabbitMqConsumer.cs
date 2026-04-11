@@ -10,14 +10,13 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
     public class RabbitMqConsumer: IMessageConsumer, IDisposable
     {
         private readonly IRabbitMqConnection _connection;
-        private readonly IModel _channel;
+        private IModel? _channel;
         private readonly IStreamOffsetStrategyFactory _strategyFactory;
-        private string _queueName;
-
-        public RabbitMqConsumer(IRabbitMqConnection connection, IStreamOffsetStrategyFactory strategyFactory)
+        private string? _queueName;
+        private readonly object _lock = new();
+        public RabbitMqConsumer(IRabbitMqConnection connection,IStreamOffsetStrategyFactory strategyFactory)
         {
             _connection = connection;
-            _channel = _connection.Connection.CreateModel();
             _strategyFactory = strategyFactory;
         }
 
@@ -25,6 +24,7 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
             string? deadLetterExchange = null)
         {
             _queueName = queueName;
+            _channel = GetOrCreateChannel();
 
             // Declare classic queue with optional dead letter exchange
             var arguments = new Dictionary<string,object>();
@@ -41,11 +41,11 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                 autoDelete: false,
                 arguments: arguments);
 
-            _channel.BasicQos(0, 1, false);
+            _channel.BasicQos(0,1,false);
 
-            var consumer = new EventingBasicConsumer(_channel);
+            var consumer = new AsyncEventingBasicConsumer(_channel);
 
-            consumer.Received += (sender,ea) =>
+            consumer.Received += async (sender,ea) =>
             {
                 var body = ea.Body.ToArray();
                 var message = Encoding.UTF8.GetString(body);
@@ -58,6 +58,8 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                 {
                     _channel.BasicAck(deliveryTag: ea.DeliveryTag,multiple: false);
                 }
+
+                await Task.Yield();
             };
 
             _channel.BasicConsume(
@@ -71,6 +73,7 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
             string? deadLetterExchange = null)
         {
             _queueName = queueName;
+            _channel = GetOrCreateChannel();
 
             // Declare quorum queue with comprehensive arguments
             var arguments = new Dictionary<string,object>
@@ -114,11 +117,11 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                 autoDelete: false,    // Must be false for quorum queues
                 arguments: arguments);
 
-            _channel.BasicQos(0, 1, false);
+            _channel.BasicQos(0,1,false);
 
-            var consumer = new EventingBasicConsumer(_channel);
+            var consumer = new AsyncEventingBasicConsumer(_channel);
 
-            consumer.Received += (sender,ea) =>
+            consumer.Received += async (sender,ea) =>
             {
                 var body = ea.Body.ToArray();
                 var message = Encoding.UTF8.GetString(body);
@@ -142,6 +145,8 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                         Console.WriteLine("Message moved to DLQ");
                     }
                 }
+
+                await Task.Yield();
             };
 
             _channel.BasicConsume(
@@ -150,14 +155,15 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                 consumer: consumer);
         }
 
-        public void StartConsumingStream(string streamName, Action<string>? messageHandler = null, 
-            long retentionSize = 0, TimeSpan? retentionTime = null, int maxSegmentSize = 0,
-            string streamOffset = "last", ulong? specificOffset = null)
+        public void StartConsumingStream(string streamName,Action<string>? messageHandler = null,
+            long retentionSize = 0,TimeSpan? retentionTime = null,int maxSegmentSize = 0,
+            string streamOffset = "last",ulong? specificOffset = null)
         {
             _queueName = streamName;
+            _channel = GetOrCreateChannel();
 
             // Declare stream with retention configuration
-            var arguments = new Dictionary<string, object>
+            var arguments = new Dictionary<string,object>
             {
                 {"x-queue-type", "stream"}
             };
@@ -165,20 +171,20 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
             // Add retention size if specified (in bytes)
             if (retentionSize > 0)
             {
-                arguments.Add("x-max-length-bytes", retentionSize);
+                arguments.Add("x-max-length-bytes",retentionSize);
             }
 
             // Add retention time if specified (using time format like "24h", "1d", "30m")
             if (retentionTime.HasValue && retentionTime.Value.TotalMilliseconds > 0)
             {
                 string timeFormat = FormatTimeForStream(retentionTime.Value);
-                arguments.Add("x-max-age", timeFormat);
+                arguments.Add("x-max-age",timeFormat);
             }
 
             // Add max segment size if specified (in bytes)
             if (maxSegmentSize > 0)
             {
-                arguments.Add("x-stream-max-segment-size-bytes", maxSegmentSize);
+                arguments.Add("x-stream-max-segment-size-bytes",maxSegmentSize);
             }
 
             _channel.QueueDeclare(
@@ -188,9 +194,12 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                 autoDelete: false,    // Streams cannot be auto-delete
                 arguments: arguments);
 
-            var consumer = new EventingBasicConsumer(_channel);
+            // Streams REQUIRE a prefetch count — broker throws PRECONDITION_FAILED without it
+            _channel.BasicQos(0, 100, false);
 
-            consumer.Received += (sender, ea) =>
+            var consumer = new AsyncEventingBasicConsumer(_channel);
+
+            consumer.Received += async (sender,ea) =>
             {
                 var body = ea.Body.ToArray();
                 var message = Encoding.UTF8.GetString(body);
@@ -200,7 +209,9 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                 messageHandler?.Invoke(message);
 
                 // Streams always require explicit acknowledgment
-                _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                _channel.BasicAck(deliveryTag: ea.DeliveryTag,multiple: false);
+
+                await Task.Yield();
             };
 
             // Use Strategy pattern for stream offset configuration - SOLID approach
@@ -214,7 +225,7 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                 strategy = _strategyFactory.CreateStrategy(streamOffset);
             }
 
-            var consumerArgs = strategy.GetConsumerArguments(streamOffset, specificOffset);
+            var consumerArgs = strategy.GetConsumerArguments(streamOffset,specificOffset);
 
             _channel.BasicConsume(
                 queue: streamName,
@@ -222,32 +233,40 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                 consumer: consumer,
                 arguments: consumerArgs);
         }
-
+        private IModel GetOrCreateChannel()
+        {
+            lock (_lock)
+            {
+                if (_channel == null || _channel.IsClosed)
+                    _channel = _connection.Connection.CreateModel();
+                return _channel;
+            }
+        }
         private static string FormatTimeForStream(TimeSpan timeSpan)
         {
             // RabbitMQ stream x-max-age format: "Y", "M", "D", "h", "m", "s" (single unit only)
             // Examples: "24h", "7D", "30m", "60s"
-            
+
             if (timeSpan.TotalDays >= 1)
             {
                 var days = (int)Math.Floor(timeSpan.TotalDays);
                 return days == 1 ? "1D" : $"{days}D";
             }
-            
+
             if (timeSpan.TotalHours >= 1)
             {
                 var hours = (int)Math.Floor(timeSpan.TotalHours);
                 return hours == 1 ? "1h" : $"{hours}h";
             }
-            
+
             if (timeSpan.TotalMinutes >= 1)
             {
                 var minutes = (int)Math.Floor(timeSpan.TotalMinutes);
                 return minutes == 1 ? "1m" : $"{minutes}m";
             }
-            
+
             // Default to seconds for very short durations
-            var seconds = (int)Math.Max(1, Math.Floor(timeSpan.TotalSeconds));
+            var seconds = (int)Math.Max(1,Math.Floor(timeSpan.TotalSeconds));
             return seconds == 1 ? "1s" : $"{seconds}s";
         }
 
@@ -258,6 +277,7 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
 
         public void Dispose()
         {
+            _channel?.Close();
             _channel?.Dispose();
         }
     }
