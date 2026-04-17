@@ -11,7 +11,7 @@ using NINJA.RabbitMQ.Subscriber.RabbitMQ.Strategies;
 
 namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
 {
-    public class RabbitMqConsumer : IMessageConsumer, IAsyncDisposable, IDisposable
+    public class RabbitMqConsumer: IMessageConsumer, IAsyncDisposable, IDisposable
     {
         private readonly IRabbitMqConnection _connection;
         private readonly IStreamOffsetStrategyFactory _strategyFactory;
@@ -39,15 +39,15 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
         // -------------------------------------------------------------------------
         // Classic queue  (AMQP, durable, optional DLX)
         // -------------------------------------------------------------------------
-        public void StartConsuming(string queueName, bool autoAck = false, Action<string>? messageHandler = null,
+        public void StartConsuming(string queueName,bool autoAck = false,Action<string>? messageHandler = null,
             string? deadLetterExchange = null)
         {
             _queueName = queueName;
             _channel = GetOrCreateChannel();
 
-            var arguments = new Dictionary<string, object>();
+            var arguments = new Dictionary<string,object>();
             if (!string.IsNullOrEmpty(deadLetterExchange))
-                arguments.Add("x-dead-letter-exchange", deadLetterExchange);
+                arguments.Add("x-dead-letter-exchange",deadLetterExchange);
 
             _channel.QueueDeclare(
                 queue: queueName,
@@ -56,33 +56,33 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                 autoDelete: false,
                 arguments: arguments);
 
-            _channel.BasicQos(0, 1, false);
+            _channel.BasicQos(0,1,false);
 
             var consumer = new AsyncEventingBasicConsumer(_channel);
-            consumer.Received += async (_, ea) =>
+            consumer.Received += async (_,ea) =>
             {
                 var message = Encoding.UTF8.GetString(ea.Body.ToArray());
                 Console.WriteLine($"[Classic] Received{(string.IsNullOrEmpty(deadLetterExchange) ? "" : $" (DLX: {deadLetterExchange})")}");
                 messageHandler?.Invoke(message);
                 if (!autoAck)
-                    _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                    _channel.BasicAck(deliveryTag: ea.DeliveryTag,multiple: false);
                 await Task.Yield();
             };
 
-            _channel.BasicConsume(queue: queueName, autoAck: autoAck, consumer: consumer);
+            _channel.BasicConsume(queue: queueName,autoAck: autoAck,consumer: consumer);
         }
 
         // -------------------------------------------------------------------------
         // Quorum queue  (AMQP, replicated, optional DLX)
         // -------------------------------------------------------------------------
-        public void StartConsumingQuorum(string queueName, bool autoAck = false, Action<string>? messageHandler = null,
-            string deadLetterStrategy = "at-least-once", string overflow = "reject-publish", int initialGroupSize = 0,
+        public void StartConsumingQuorum(string queueName,bool autoAck = false,Action<string>? messageHandler = null,
+            string deadLetterStrategy = "at-least-once",string overflow = "reject-publish",int initialGroupSize = 0,
             string? deadLetterExchange = null)
         {
             _queueName = queueName;
             _channel = GetOrCreateChannel();
 
-            var arguments = new Dictionary<string, object>
+            var arguments = new Dictionary<string,object>
             {
                 { "x-queue-type",             "quorum"            },
                 { "x-dead-letter-strategy",   deadLetterStrategy  },
@@ -94,14 +94,14 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
             if (!string.IsNullOrEmpty(deadLetterExchange))
             {
                 string dlqName = $"{queueName}.dlq";
-                _channel.ExchangeDeclare(exchange: deadLetterExchange, type: ExchangeType.Direct, durable: true);
-                arguments.Add("x-dead-letter-exchange", deadLetterExchange);
-                _channel.QueueDeclare(queue: dlqName, durable: true, exclusive: false, autoDelete: false);
-                _channel.QueueBind(queue: dlqName, exchange: deadLetterExchange, routingKey: queueName);
+                _channel.ExchangeDeclare(exchange: deadLetterExchange,type: ExchangeType.Direct,durable: true);
+                arguments.Add("x-dead-letter-exchange",deadLetterExchange);
+                _channel.QueueDeclare(queue: dlqName,durable: true,exclusive: false,autoDelete: false);
+                _channel.QueueBind(queue: dlqName,exchange: deadLetterExchange,routingKey: queueName);
             }
 
             if (initialGroupSize > 0)
-                arguments.Add("x-quorum-initial-group-size", initialGroupSize);
+                arguments.Add("x-quorum-initial-group-size",initialGroupSize);
 
             _channel.QueueDeclare(
                 queue: queueName,
@@ -110,40 +110,40 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                 autoDelete: false,
                 arguments: arguments);
 
-            _channel.BasicQos(0, 1, false);
+            _channel.BasicQos(0,1,false);
 
             var consumer = new AsyncEventingBasicConsumer(_channel);
-            consumer.Received += async (_, ea) =>
+            consumer.Received += async (_,ea) =>
             {
                 var message = Encoding.UTF8.GetString(ea.Body.ToArray());
                 Console.WriteLine($"[Quorum] Received (DLX: {deadLetterExchange ?? "None"}, Strategy: {deadLetterStrategy}, Overflow: {overflow})");
                 try
                 {
                     messageHandler?.Invoke(message);
-                    _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                    _channel.BasicAck(deliveryTag: ea.DeliveryTag,multiple: false);
                 }
                 catch (Exception)
                 {
-                    _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
+                    _channel.BasicNack(deliveryTag: ea.DeliveryTag,multiple: false,requeue: true);
                     if (ea.BasicProperties.Headers?.ContainsKey("x-death") == true)
                         Console.WriteLine("[Quorum] Message moved to DLQ after delivery limit reached");
                 }
                 await Task.Yield();
             };
 
-            _channel.BasicConsume(queue: queueName, autoAck: autoAck, consumer: consumer);
+            _channel.BasicConsume(queue: queueName,autoAck: autoAck,consumer: consumer);
         }
 
         // -------------------------------------------------------------------------
         // Stream  (RabbitMQ Stream Protocol, port 5552 — NOT AMQP)
         //
-        //  Key differences from classic/quorum:
-        //  • Uses a dedicated binary TCP connection on port 5552 (StreamSystem).
-        //  • Non-destructive reads: messages are NEVER removed when consumed.
-        //  • Every consumer chooses its own starting position (IOffsetType).
-        //  • Retention is controlled by size (MaxLengthBytes) and age (MaxAge),
+        // # Key differences from classic/quorum:
+        //  - Uses a dedicated binary TCP connection on port 5552 (StreamSystem).
+        //  - Non-destructive reads: messages are NEVER removed when consumed.
+        //  - Every consumer chooses its own starting position (IOffsetType).
+        //  - Retention is controlled by size (MaxLengthBytes) and age (MaxAge),
         //    not by consumer acknowledgement.
-        //  • Acknowledgements are NOT used for message deletion — they are only
+        //  - Acknowledgements are NOT used for message deletion — they are only
         //    used for flow-control credits inside the stream protocol.
         // -------------------------------------------------------------------------
         public async Task StartConsumingStream(
@@ -164,8 +164,8 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
                         ? "127.0.0.1"
                         : _settings.HostName), _settings.StreamPort)
                 },
-                UserName    = _settings.UserName,
-                Password    = _settings.Password,
+                UserName = _settings.UserName,
+                Password = _settings.Password,
                 VirtualHost = _settings.VirtualHost
             });
 
@@ -190,12 +190,12 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
 
             // 4. Create the consumer using the high-level Reliable Consumer
             //    (auto-reconnects on broker restart — important for a stream POC)
-            _streamConsumer = await Consumer.Create(new ConsumerConfig(_streamSystem, streamName)
+            _streamConsumer = await Consumer.Create(new ConsumerConfig(_streamSystem,streamName)
             {
-                OffsetSpec     = offsetType,
+                OffsetSpec = offsetType,
                 // In RabbitMQ.Stream.Client 1.11+, MessageHandler is:
                 // Func<string consumerRef, RawConsumer consumer, MessageContext ctx, Message message, Task>
-                MessageHandler = async (_, _, ctx, message) =>
+                MessageHandler = async (_,_,ctx,message) =>
                 {
                     var body = message.Data.Contents.ToArray();
                     var text = Encoding.UTF8.GetString(body);
