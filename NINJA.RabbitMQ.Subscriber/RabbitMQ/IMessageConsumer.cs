@@ -15,6 +15,6 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
             long retentionSize = 0, TimeSpan? retentionTime = null, int maxSegmentSize = 0,
             string streamOffset = "last", ulong? specificOffset = null);
 
-        void StopConsuming();
+        Task StopConsuming();
     }
 }

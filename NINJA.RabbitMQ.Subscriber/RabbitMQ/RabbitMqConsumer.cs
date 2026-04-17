@@ -11,7 +11,7 @@ using NINJA.RabbitMQ.Subscriber.RabbitMQ.Strategies;
 
 namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
 {
-    public class RabbitMqConsumer: IMessageConsumer, IAsyncDisposable, IDisposable
+    public class RabbitMqConsumer: IMessageConsumer, IAsyncDisposable
     {
         private readonly IRabbitMqConnection _connection;
         private readonly IStreamOffsetStrategyFactory _strategyFactory;
@@ -25,6 +25,10 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
         // Stream Client state — used exclusively for streams (port 5552, binary protocol)
         private StreamSystem? _streamSystem;
         private Consumer? _streamConsumer;  // RabbitMQ.Stream.Client.Reliable.Consumer
+
+        // Guards against double-dispose from any combination of:
+        // StopConsuming() → Dispose() / DisposeAsync()
+        private volatile bool _disposed;
 
         public RabbitMqConsumer(
             IRabbitMqConnection connection,
@@ -208,36 +212,66 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
             });
         }
 
-        public void StopConsuming()
+        public async Task StopConsuming()
         {
-            // Close AMQP channel
-            _channel?.Close();
-
-            // Close stream consumer (fire-and-forget on sync path)
-            _streamConsumer?.Close().GetAwaiter().GetResult();
+            // Delegates to DisposeAsync so the same guarded teardown path is used.
+            // The consumer is meant to be discarded after stopping — there is no
+            // "restart" on the same instance.
+            await DisposeAsync();
         }
 
         // -------------------------------------------------------------------------
         // Disposal
+        //
+        // Only IAsyncDisposable — no sync IDisposable wrapper.
+        // Callers must use:  await using var consumer = ...
+        //                    await consumer.StopConsuming()
+        //
+        // Why no IDisposable?
+        //   All teardown is genuinely async (stream protocol close, AMQP close).
+        //   A sync Dispose() would block with .GetAwaiter().GetResult() which can
+        //   deadlock when called from a SynchronizationContext (e.g. ASP.NET).
+        //   Forcing callers to await the async path is safer and more honest.
+        //
+        // Why no GC.SuppressFinalize?
+        //   This class has no finalizer (~RabbitMqConsumer). SuppressFinalize only
+        //   matters when you have a finalizer to suppress. Without one it is a
+        //   no-op — dead code copied from the full Dispose pattern boilerplate.
         // -------------------------------------------------------------------------
         public async ValueTask DisposeAsync()
         {
-            _channel?.Close();
-            _channel?.Dispose();
+            if (_disposed)
+                return;
+            _disposed = true;
 
+            // 1. Stop the stream consumer first — it depends on the StreamSystem.
+            //    Consumer.Close() returns Task<ResponseCode>; the code is discarded
+            //    at teardown since there is nothing actionable to do with it.
             if (_streamConsumer is not null)
+            {
                 await _streamConsumer.Close();
+                _streamConsumer = null;
+            }
 
+            // 2. Close the StreamSystem (binary TCP connection on port 5552).
             if (_streamSystem is not null)
+            {
                 await _streamSystem.Close();
-        }
+                _streamSystem = null;
+            }
 
-        public void Dispose()
-        {
-            _channel?.Close();
-            _channel?.Dispose();
-            _streamConsumer?.Close().GetAwaiter().GetResult();
-            _streamSystem?.Close().GetAwaiter().GetResult();
+            // 3. Close then dispose the AMQP channel (port 5672).
+            //    Close() sends a clean protocol-level shutdown to the broker.
+            //    Dispose() then releases the socket.
+            //    Skipping Close() and going straight to Dispose() leaves the broker
+            //    with a hard TCP reset instead of a graceful shutdown.
+            if (_channel is not null)
+            {
+                if (!_channel.IsClosed)
+                    _channel.Close();
+                _channel.Dispose();
+                _channel = null;
+            }
         }
 
         // -------------------------------------------------------------------------

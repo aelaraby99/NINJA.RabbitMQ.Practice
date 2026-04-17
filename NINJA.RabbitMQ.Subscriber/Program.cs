@@ -22,7 +22,13 @@ namespace NINJA.RabbitMQ.Subscriber
             builder.Services.AddScoped<IWeatherForecastService,WeatherForecastService>();
 
             var host = builder.Build();
-            using var scope = host.Services.CreateScope();
+
+            // CreateAsyncScope() returns AsyncServiceScope which implements IAsyncDisposable.
+            // This allows 'await using' and ensures the container calls DisposeAsync()
+            // (not Dispose()) on tracked transient services like RabbitMqConsumer.
+            // CreateScope() + plain 'using' would throw InvalidOperationException because
+            // the sync dispose path cannot handle IAsyncDisposable-only services.
+            await using var scope = host.Services.CreateAsyncScope();
             var weatherService = scope.ServiceProvider.GetRequiredService<IWeatherForecastService>();
 
             Console.WriteLine("Starting RabbitMQ Subscriber...");
@@ -67,23 +73,12 @@ namespace NINJA.RabbitMQ.Subscriber
                     Console.WriteLine($"[Stream] Processing: {msg}");
                     weatherService.ProcessWeatherForecast(msg);
                 },
-                retentionSize: 1_073_741_824,           // 1 GB
-                retentionTime: TimeSpan.FromHours(24),  // 24 h
-                maxSegmentSize: 1_048_576,              // 1 MB
-                streamOffset: "first");                 // replay all stored messages
-                                                        //await streamConsumer.StartConsumingStream(
-                                                        //  "stream-weather-forecasts",
-                                                        //  messageHandler: msg =>
-                                                        //  {
-                                                        //      Console.WriteLine($"[Stream] Processing: {msg}");
-                                                        //      weatherService.ProcessWeatherForecast(msg);
-                                                        //  },
-                                                        //  retentionSize: 1_073_741_824,           // 1 GB
-                                                        //  retentionTime: TimeSpan.FromHours(24),  // 24 h
-                                                        //  maxSegmentSize: 1_048_576,              // 1 MB
-                                                        //  streamOffset: "offset",
-                                                        //  specificOffset : 4);      
-                                                        // --- Quorum + DLX --------------------------------------------------------
+                retentionSize: 1_073_741_824,          // 1 GB
+                retentionTime: TimeSpan.FromHours(24), // 24 h
+                maxSegmentSize: 1_048_576,             // 1 MB
+                streamOffset: "first");                // replay all stored messages
+
+            // --- Quorum + DLX --------------------------------------------------------
             quorumDLXConsumer.StartConsumingQuorum(
                 "quorum-dlx-weather",
                 autoAck: false,
@@ -132,13 +127,15 @@ namespace NINJA.RabbitMQ.Subscriber
 
             Console.ReadKey();
 
-            classicConsumer.StopConsuming();
-            quorumConsumer.StopConsuming();
-            streamConsumer.StopConsuming();
-            quorumDLXConsumer.StopConsuming();
-            originalConsumer.StopConsuming();
-            criticalOrdersConsumer.StopConsuming();
-            criticalOrdersDLQConsumer.StopConsuming();
+            // StopConsuming() delegates to DisposeAsync() — each consumer does a
+            // graceful protocol-level shutdown before releasing its connection.
+            await classicConsumer.StopConsuming();
+            await quorumConsumer.StopConsuming();
+            await streamConsumer.StopConsuming();
+            await quorumDLXConsumer.StopConsuming();
+            await originalConsumer.StopConsuming();
+            await criticalOrdersConsumer.StopConsuming();
+            await criticalOrdersDLQConsumer.StopConsuming();
 
             Console.WriteLine("All consumers stopped.");
         }
