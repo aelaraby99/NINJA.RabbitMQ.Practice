@@ -1,15 +1,10 @@
-using System.Collections.Generic;
+using RabbitMQ.Stream.Client;
 
 namespace NINJA.RabbitMQ.Subscriber.RabbitMQ.Strategies
 {
+    // Replay all messages stored in the stream from the very beginning.
     public class FirstOffsetStrategy : IStreamOffsetStrategy
     {
-        public Dictionary<string, object> GetConsumerArguments(string streamOffset, ulong? specificOffset)
-        {
-            return new Dictionary<string, object>
-            {
-                {"x-stream-offset", "first"}
-            };
-        }
+        public IOffsetType GetOffsetType(ulong? specificOffset = null) => new OffsetTypeFirst();
     }
 }

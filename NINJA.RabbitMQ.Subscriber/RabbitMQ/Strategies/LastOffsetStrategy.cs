@@ -1,15 +1,10 @@
-using System.Collections.Generic;
+using RabbitMQ.Stream.Client;
 
 namespace NINJA.RabbitMQ.Subscriber.RabbitMQ.Strategies
 {
+    // Start at the last available chunk — get the tail of historical data then continue live.
     public class LastOffsetStrategy : IStreamOffsetStrategy
     {
-        public Dictionary<string, object> GetConsumerArguments(string streamOffset, ulong? specificOffset)
-        {
-            return new Dictionary<string, object>
-            {
-                {"x-stream-offset", "last"}
-            };
-        }
+        public IOffsetType GetOffsetType(ulong? specificOffset = null) => new OffsetTypeLast();
     }
 }

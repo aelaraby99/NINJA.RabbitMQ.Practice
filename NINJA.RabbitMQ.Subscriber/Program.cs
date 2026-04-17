@@ -10,16 +10,16 @@ namespace NINJA.RabbitMQ.Subscriber
 {
     internal class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             var builder = Host.CreateApplicationBuilder(args);
-            builder.Configuration.AddJsonFile("appsettings.json",optional: false,reloadOnChange: true);
+            builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
 
             builder.Services.AddOptions<RabbitMqSettings>().BindConfiguration(RabbitMqSettings.SectionName).ValidateOnStart();
-            builder.Services.AddSingleton<IRabbitMqConnection,RabbitMqConnection>();
-            builder.Services.AddSingleton<IStreamOffsetStrategyFactory,StreamOffsetStrategyFactory>();
-            builder.Services.AddTransient<IMessageConsumer,RabbitMqConsumer>();
-            builder.Services.AddScoped<IWeatherForecastService,WeatherForecastService>();
+            builder.Services.AddSingleton<IRabbitMqConnection, RabbitMqConnection>();
+            builder.Services.AddSingleton<IStreamOffsetStrategyFactory, StreamOffsetStrategyFactory>();
+            builder.Services.AddTransient<IMessageConsumer, RabbitMqConsumer>();
+            builder.Services.AddScoped<IWeatherForecastService, WeatherForecastService>();
 
             var host = builder.Build();
             using var scope = host.Services.CreateScope();
@@ -28,91 +28,99 @@ namespace NINJA.RabbitMQ.Subscriber
             Console.WriteLine("Starting RabbitMQ Subscriber...");
             Console.WriteLine("Press any key to stop.");
 
-            // Create separate consumer instances for each queue type
-            var classicConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
-            var quorumConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
-            var streamConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
-            var quorumDLXConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
-            var originalConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
+            // Each GetRequiredService<IMessageConsumer>() returns a fresh transient instance
+            // so every consumer owns its own AMQP channel / stream connection.
+            var classicConsumer        = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
+            var quorumConsumer         = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
+            var streamConsumer         = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
+            var quorumDLXConsumer      = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
+            var originalConsumer       = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
             var criticalOrdersConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
             var criticalOrdersDLQConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
 
-            // Classic queue consumer - matches producer endpoint
-            classicConsumer.StartConsuming("classic-weather-forecasts",autoAck: false,messageHandler: weatherService.ProcessWeatherForecast);
+            // --- Classic queue -------------------------------------------------------
+            classicConsumer.StartConsuming(
+                "classic-weather-forecasts",
+                autoAck: false,
+                messageHandler: weatherService.ProcessWeatherForecast);
 
-            // Quorum queue consumer - matches producer endpoint
-            quorumConsumer.StartConsumingQuorum("quorum-weather-forecasts",
+            // --- Quorum queue --------------------------------------------------------
+            quorumConsumer.StartConsumingQuorum(
+                "quorum-weather-forecasts",
                 autoAck: false,
                 messageHandler: msg =>
                 {
-                    Console.WriteLine($" Quorum Processing: {msg}");
+                    Console.WriteLine($"[Quorum] Processing: {msg}");
                     weatherService.ProcessWeatherForecast(msg);
                 },
                 deadLetterStrategy: "at-least-once",
                 overflow: "reject-publish",
-                initialGroupSize: 3
-            );
+                initialGroupSize: 3);
 
-            // Stream queue consumer - matches producer endpoint
-            streamConsumer.StartConsumingStream("stream-weather-forecasts",
+            // --- Stream queue  (RabbitMQ Stream Protocol — port 5552) -----------------
+            // StartConsumingStream is async because StreamSystem.Create and
+            // Consumer.Create are both async operations in RabbitMQ.Stream.Client.
+            await streamConsumer.StartConsumingStream(
+                "stream-weather-forecasts",
                 messageHandler: msg =>
                 {
-                    Console.WriteLine($" Stream Processing: {msg}");
+                    Console.WriteLine($"[Stream] Processing: {msg}");
                     weatherService.ProcessWeatherForecast(msg);
                 },
-                retentionSize: 1073741824, // 1GB
-                retentionTime: TimeSpan.FromHours(24), // 24h
-                maxSegmentSize: 1048576, // 1MB
-                streamOffset: "first" // Consume all existing messages
-            );
+                retentionSize: 1_073_741_824,           // 1 GB
+                retentionTime: TimeSpan.FromHours(24),  // 24 h
+                maxSegmentSize: 1_048_576,              // 1 MB
+                streamOffset: "first");                 // replay all stored messages
 
-            // Quorum with DLX consumer - matches producer endpoint
-            quorumDLXConsumer.StartConsumingQuorum("quorum-dlx-weather",
+            // --- Quorum + DLX --------------------------------------------------------
+            quorumDLXConsumer.StartConsumingQuorum(
+                "quorum-dlx-weather",
                 autoAck: false,
                 messageHandler: msg =>
                 {
-                    Console.WriteLine($" Quorum+DLX Processing: {msg}");
+                    Console.WriteLine($"[Quorum+DLX] Processing: {msg}");
                     weatherService.ProcessWeatherForecast(msg);
                 },
                 deadLetterStrategy: "at-most-once",
                 overflow: "reject-publish-dlx",
                 initialGroupSize: 3,
-                deadLetterExchange: "weather-dlx"
-            );
+                deadLetterExchange: "weather-dlx");
 
-            // Also keep the original consumers for backward compatibility
-            originalConsumer.StartConsuming("weather-forecasts",autoAck: false,messageHandler: weatherService.ProcessWeatherForecast);
+            // --- Original (backward-compat) ------------------------------------------
+            originalConsumer.StartConsuming(
+                "weather-forecasts",
+                autoAck: false,
+                messageHandler: weatherService.ProcessWeatherForecast);
 
-            criticalOrdersConsumer.StartConsumingQuorum("critical-orders",
-               autoAck: false,
-                messageHandler: msg =>
-                {
-                    Console.WriteLine($"Processing critical order: {msg}");
-                    if (msg.Contains("fail",StringComparison.OrdinalIgnoreCase))
-                        throw new Exception("Simulated failure");
-                },
-                deadLetterExchange: "critical-orders.dlx"
-               );
-            criticalOrdersDLQConsumer.StartConsuming("critical-orders.dlq",
+            // --- Critical orders (quorum + DLQ) --------------------------------------
+            criticalOrdersConsumer.StartConsumingQuorum(
+                "critical-orders",
                 autoAck: false,
                 messageHandler: msg =>
                 {
-                    Console.WriteLine($"💀 DLQ Received: {msg}");
-                });
+                    Console.WriteLine($"[CriticalOrders] Processing: {msg}");
+                    if (msg.Contains("fail", StringComparison.OrdinalIgnoreCase))
+                        throw new Exception("Simulated failure");
+                },
+                deadLetterExchange: "critical-orders.dlx");
+
+            criticalOrdersDLQConsumer.StartConsuming(
+                "critical-orders.dlq",
+                autoAck: false,
+                messageHandler: msg => Console.WriteLine($"[DLQ] Received: {msg}"));
 
             Console.WriteLine("All consumers started successfully!");
             Console.WriteLine("Active consumers:");
-            Console.WriteLine("  - Classic: classic-weather-forecasts");
-            Console.WriteLine("  - Quorum: quorum-weather-forecasts");
-            Console.WriteLine("  - Stream: stream-weather-forecasts");
-            Console.WriteLine("  - Quorum+DLX: quorum-dlx-weather");
-            Console.WriteLine("  - Original: weather-forecasts");
-            Console.WriteLine("  - Critical Orders: critical-orders");
-            Console.WriteLine("  - Critical Orders DLQ: critical-orders.dlq");
+            Console.WriteLine("  [AMQP]   classic-weather-forecasts");
+            Console.WriteLine("  [AMQP]   quorum-weather-forecasts");
+            Console.WriteLine("  [STREAM] stream-weather-forecasts  (port 5552, RabbitMQ.Stream.Client)");
+            Console.WriteLine("  [AMQP]   quorum-dlx-weather");
+            Console.WriteLine("  [AMQP]   weather-forecasts");
+            Console.WriteLine("  [AMQP]   critical-orders");
+            Console.WriteLine("  [AMQP]   critical-orders.dlq");
 
             Console.ReadKey();
 
-            // Stop all consumers
             classicConsumer.StopConsuming();
             quorumConsumer.StopConsuming();
             streamConsumer.StopConsuming();

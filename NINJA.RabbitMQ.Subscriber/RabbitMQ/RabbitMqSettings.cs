@@ -14,5 +14,7 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
         public string VirtualHost { get; set; } = "/";
         [Range(1,65535,ErrorMessage = "Port must be between 1 and 65535")]
         public int Port { get; set; } = 5672;
+        [Range(1,65535,ErrorMessage = "StreamPort must be between 1 and 65535")]
+        public int StreamPort { get; set; } = 5552;
     }
 }
