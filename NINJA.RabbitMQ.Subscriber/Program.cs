@@ -120,7 +120,7 @@ namespace NINJA.RabbitMQ.Subscriber
             // Intercepts every message published to amq.direct and prints a
             // detailed trace card without affecting the original message flow.
             //
-            // ⚠️  Prerequisite — run once on the broker before starting:
+            //  Prerequisite — run once on the broker before starting:
             //        rabbitmqctl trace_on
             //     Or: Management UI → Admin → Tracing → Add trace
             //
@@ -129,6 +129,10 @@ namespace NINJA.RabbitMQ.Subscriber
             tracerConsumer.StartConsumingTrace(
                 queueName: "tracer-qu",
                 routingKey: "publish.#");
+
+            //tracerConsumer.StartConsumingTrace(
+            //    queueName: "tracer-qu",
+            //    routingKey: "deliver.#");
 
             Console.WriteLine("All consumers started successfully!");
             Console.WriteLine("Active consumers:");
