@@ -43,6 +43,7 @@ namespace NINJA.RabbitMQ.Subscriber
             var originalConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
             var criticalOrdersConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
             var criticalOrdersDLQConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
+            var tracerConsumer = scope.ServiceProvider.GetRequiredService<IMessageConsumer>();
 
             // --- Classic queue -------------------------------------------------------
             classicConsumer.StartConsuming(
@@ -115,6 +116,20 @@ namespace NINJA.RabbitMQ.Subscriber
                 autoAck: false,
                 messageHandler: msg => Console.WriteLine($"[DLQ] Received: {msg}"));
 
+            // --- Firehose tracer (amq.rabbitmq.trace) ----------------------------
+            // Intercepts every message published to amq.direct and prints a
+            // detailed trace card without affecting the original message flow.
+            //
+            // ⚠️  Prerequisite — run once on the broker before starting:
+            //        rabbitmqctl trace_on
+            //     Or: Management UI → Admin → Tracing → Add trace
+            //
+            // The queue "tracer-qu" is declared and auto-bound here; the firehose
+            // exchange (amq.rabbitmq.trace) is a system exchange — always present.
+            tracerConsumer.StartConsumingTrace(
+                queueName: "tracer-qu",
+                routingKey: "publish.#");
+
             Console.WriteLine("All consumers started successfully!");
             Console.WriteLine("Active consumers:");
             Console.WriteLine("  [AMQP]   classic-weather-forecasts");
@@ -124,6 +139,7 @@ namespace NINJA.RabbitMQ.Subscriber
             Console.WriteLine("  [AMQP]   weather-forecasts");
             Console.WriteLine("  [AMQP]   critical-orders");
             Console.WriteLine("  [AMQP]   critical-orders.dlq");
+            Console.WriteLine("  [TRACE]  tracer-qu  ← amq.rabbitmq.trace / publish.amq.direct  (firehose)");
 
             Console.ReadKey();
 
@@ -136,6 +152,7 @@ namespace NINJA.RabbitMQ.Subscriber
             await originalConsumer.StopConsuming();
             await criticalOrdersConsumer.StopConsuming();
             await criticalOrdersDLQConsumer.StopConsuming();
+            await tracerConsumer.StopConsuming();
 
             Console.WriteLine("All consumers stopped.");
         }

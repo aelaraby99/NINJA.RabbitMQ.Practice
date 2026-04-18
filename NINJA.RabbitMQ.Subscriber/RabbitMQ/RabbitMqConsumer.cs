@@ -212,6 +212,169 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
             });
         }
 
+        // -------------------------------------------------------------------------
+        // Firehose trace consumer  (amq.rabbitmq.trace — built-in topic exchange)
+        //
+        // How RabbitMQ's firehose works:
+        //   When tracing is ON the broker secretly publishes a copy of every
+        //   in-flight message to amq.rabbitmq.trace using a routing key of either:
+        //     publish.<exchange>   — message was published to <exchange>
+        //     deliver.<queue>      — message was delivered from <queue>
+        //
+        //   The copy carries these AMQP headers:
+        //     exchange_name  (byte[])              original exchange
+        //     routing_keys   (IList<object>/byte[]) original routing keys
+        //     properties     (IDictionary)          original AMQP properties table
+        //     node           (byte[])               broker node name
+        //     redelivered    (byte)                 0 = first delivery, 1 = redelivery
+        //
+        //   The body of the trace message IS the original message body.
+        //
+        // Prerequisites (must be done once on the broker, not in code):
+        //   $ rabbitmqctl trace_on          (enables for the default vhost)
+        //   Management UI → Admin → Tracing → Add trace
+        //
+        // amq.rabbitmq.trace is a SYSTEM exchange — never call ExchangeDeclare on it.
+        // Just declare your queue and call QueueBind; the exchange is always there.
+        // -------------------------------------------------------------------------
+        public void StartConsumingTrace(
+            string queueName = "tracer-qu",
+            string routingKey = "publish.amq.direct")
+        {
+            _queueName = queueName;
+            _channel = GetOrCreateChannel();
+
+            // Classic durable queue — holds trace events until consumed.
+            _channel.QueueDeclare(
+                queue: queueName,
+                durable: true,
+                exclusive: false,
+                autoDelete: false,
+                arguments: null);
+
+            _channel.QueueBind(
+                queue: queueName,
+                exchange: "amq.rabbitmq.trace",
+                routingKey: routingKey);
+            _channel.BasicQos(prefetchSize: 0,prefetchCount: 1,global: false);
+
+            var consumer = new AsyncEventingBasicConsumer(_channel);
+            consumer.Received += async (_,ea) =>
+            {
+                PrintTraceEvent(ea,routingKey);
+                _channel.BasicAck(deliveryTag: ea.DeliveryTag,multiple: false);
+                await Task.Yield();
+            };
+
+            _channel.BasicConsume(queue: queueName,autoAck: false,consumer: consumer);
+        }
+
+        // -------------------------------------------------------------------------
+        // Renders a descriptive, colour-coded trace card to the console.
+        // -------------------------------------------------------------------------
+        private static void PrintTraceEvent(BasicDeliverEventArgs ea,string bindingKey)
+        {
+            var headers = ea.BasicProperties.Headers;
+            var body = ea.Body.ToArray();
+            var capturedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+
+            // ── Header: exchange_name ───────────────────────────────────────────
+            string exchangeName = GetHeaderString(headers,"exchange_name")
+                                  ?? "(default exchange)";
+
+            // ── Header: node ────────────────────────────────────────────────────
+            string node = GetHeaderString(headers,"node") ?? "unknown";
+
+            // ── Header: redelivered (0 or 1, stored as a byte) ──────────────────
+            bool redelivered = GetHeaderString(headers,"redelivered") is "1" or "true";
+
+            // ── Header: routing_keys  (AMQP array → IList<object> of byte[]) ───
+            string routingKeysText = "(none)";
+            if (headers?.TryGetValue("routing_keys",out var rkObj) == true
+                && rkObj is IList<object> rkList)
+            {
+                var keys = new List<string>();
+                foreach (var item in rkList)
+                {
+                    if (item is byte[] b)
+                        keys.Add(Encoding.UTF8.GetString(b));
+                    else if (item is not null)
+                        keys.Add(item.ToString()!);
+                }
+                if (keys.Count > 0)
+                    routingKeysText = string.Join(", ",keys);
+            }
+
+            // ── Header: properties  (nested AMQP table) ─────────────────────────
+            string contentType = "(none)";
+            string deliveryMode = "(none)";
+            if (headers?.TryGetValue("properties",out var propsObj) == true
+                && propsObj is IDictionary<string,object> props)
+            {
+                if (props.TryGetValue("content_type",out var ct))
+                    contentType = ct is byte[] ctBytes
+                        ? Encoding.UTF8.GetString(ctBytes)
+                        : ct?.ToString() ?? "(none)";
+
+                if (props.TryGetValue("delivery_mode",out var dm))
+                    deliveryMode = dm switch
+                    {
+                        byte b => b == 2 ? "Persistent (2)" : $"Non-persistent ({b})",
+                        int i => i == 2 ? "Persistent (2)" : $"Non-persistent ({i})",
+                        _ => dm?.ToString() ?? "(none)"
+                    };
+            }
+
+            // ── Payload preview (first 150 chars) ───────────────────────────────
+            string payloadText = Encoding.UTF8.GetString(body);
+            string payloadPreview = payloadText.Length > 150
+                ? payloadText[..150] + "…"
+                : payloadText;
+
+            // ── Print the trace card ─────────────────────────────────────────────
+            const string hr = "══════════════════════════════════════════════════════════════";
+            const string thr = "──────────────────────────────────────────────────────────────";
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine(hr);
+            Console.WriteLine("  RabbitMQ Firehose — Trace Event Captured");
+            Console.WriteLine(hr);
+
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"   Exchange      : {exchangeName}");
+            Console.WriteLine($"   Routing Keys  : {routingKeysText}");
+            Console.WriteLine($"   Binding Key   : {bindingKey}");
+            Console.WriteLine($"   Node          : {node}");
+            Console.WriteLine($"   Redelivered   : {(redelivered ? "Yes ⚠️" : "No")}");
+
+            Console.ForegroundColor = ConsoleColor.White;
+            Console.WriteLine($"   Payload Size  : {body.Length:N0} bytes");
+            Console.WriteLine($"   Content-Type  : {contentType}");
+            Console.WriteLine($"   Delivery Mode : {deliveryMode}");
+
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"   Captured At   : {capturedAt}");
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine(thr);
+            Console.WriteLine("    Payload Preview");
+
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"  {payloadPreview}");
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine(hr);
+            Console.ResetColor();
+        }
+
+        // Reads an AMQP header value — broker stores strings as byte arrays.
+        private static string? GetHeaderString(IDictionary<string,object>? headers,string key)
+        {
+            if (headers is null || !headers.TryGetValue(key,out var val))
+                return null;
+            return val is byte[] bytes ? Encoding.UTF8.GetString(bytes) : val?.ToString();
+        }
+
         public async Task StopConsuming()
         {
             // Delegates to DisposeAsync so the same guarded teardown path is used.
