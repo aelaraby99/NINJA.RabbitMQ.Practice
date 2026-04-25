@@ -164,9 +164,7 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ
             {
                 Endpoints = new List<EndPoint>
                 {
-                    new IPEndPoint(IPAddress.Parse(_settings.HostName == "localhost"
-                        ? "127.0.0.1"
-                        : _settings.HostName), _settings.StreamPort)
+                    new DnsEndPoint(_settings.HostName, _settings.StreamPort)
                 },
                 UserName = _settings.UserName,
                 Password = _settings.Password,

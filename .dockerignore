@@ -1,0 +1,30 @@
+## Exclude build artefacts — keeps the Docker build context small and fast.
+## These directories are recreated by dotnet restore/build inside the container.
+
+**/bin/
+**/obj/
+
+## IDE / OS artefacts
+**/.vs/
+**/.vscode/
+**/.idea/
+**/*.user
+Thumbs.db
+.DS_Store
+
+## Git
+.git/
+.gitignore
+.gitattributes
+
+## Docker files themselves (no need to copy into the image)
+docker-compose.yml
+docker-compose.override.yml
+**/*.Dockerfile
+**/Dockerfile
+
+## RabbitMQ config (mounted as volumes by docker-compose, not baked into images)
+rabbitmq/
+
+## Markdown and docs
+*.md

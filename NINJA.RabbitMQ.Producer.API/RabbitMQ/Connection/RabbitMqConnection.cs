@@ -1,34 +1,67 @@
-﻿using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.Extensions.Options;
+using Polly;
 using RabbitMQ.Client;
+using RabbitMQ.Client.Exceptions;
+using System.Net.Sockets;
+
 namespace NINJA.RabbitMQ.Producer.API.RabbitMQ.Connection
 {
     public class RabbitMqConnection: IRabbitMqConnection, IDisposable
     {
         private IConnection? _connection;
-        public IConnection Connection => _connection!;
-        private readonly RabbitMqSettings _settings;
-        public RabbitMqConnection(IOptions<RabbitMqSettings> options)
+        private readonly ConnectionFactory _factory;
+        private readonly object _lock = new();
+        private readonly ILogger<RabbitMqConnection> _logger;
+
+        public RabbitMqConnection(IOptions<RabbitMqSettings> settings,ILogger<RabbitMqConnection> logger)
         {
-            _settings = options.Value;
-            InitializeConnection();
+            _logger = logger;
+            _factory = new ConnectionFactory
+            {
+                HostName = settings.Value.HostName,
+                UserName = settings.Value.UserName,
+                Password = settings.Value.Password,
+                VirtualHost = settings.Value.VirtualHost,
+                Port = settings.Value.Port,
+                AutomaticRecoveryEnabled = true,
+                NetworkRecoveryInterval = TimeSpan.FromSeconds(10)
+            };
         }
 
-        private void InitializeConnection()
+        public IConnection Connection
         {
-            var factory = new ConnectionFactory()
+            get
             {
-                HostName = _settings.HostName,
-                Password = _settings.Password,
-                VirtualHost = _settings.VirtualHost,
-                UserName = _settings?.UserName,
-                Port = _settings?.Port ?? 0
-            };
-            _connection = factory.CreateConnection();
+                lock (_lock)
+                {
+                    if (_connection == null || !_connection.IsOpen)
+                        _connection = CreateConnectionWithRetry();
+                    return _connection;
+                }
+            }
+        }
+
+        private IConnection CreateConnectionWithRetry()
+        {
+            var retryPolicy = Policy
+                .Handle<BrokerUnreachableException>()
+                .Or<SocketException>()
+                .WaitAndRetry(
+                    retryCount: 10,
+                    sleepDurationProvider: attempt =>
+                        TimeSpan.FromSeconds(Math.Min(Math.Pow(2,attempt), 30)),
+                    onRetry: (ex,delay,attempt,_) =>
+                        _logger.LogWarning(
+                            "RabbitMQ connection attempt {Attempt}/10 failed. " +
+                            "Retrying in {Delay}s. Error: {Error}",
+                            attempt,delay.TotalSeconds,ex.Message));
+
+            return retryPolicy.Execute(() => _factory.CreateConnection());
         }
 
         public void Dispose()
         {
+            _connection?.Close();
             _connection?.Dispose();
         }
     }

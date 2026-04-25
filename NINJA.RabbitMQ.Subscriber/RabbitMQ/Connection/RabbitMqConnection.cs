@@ -46,12 +46,13 @@ namespace NINJA.RabbitMQ.Subscriber.RabbitMQ.Connection
             var retryPolicy = Policy.Handle<BrokerUnreachableException>()
                 .Or<SocketException>()
                 .WaitAndRetry(
-                    retryCount: 5,
+                    retryCount: 10,
                     sleepDurationProvider: attempt =>
-                        TimeSpan.FromSeconds(Math.Pow(2,attempt)), // 2,4,8,16,32s
+                        TimeSpan.FromSeconds(Math.Min(Math.Pow(2,attempt), 30)),
                     onRetry: (ex,delay,attempt,_) =>
                         _logger.LogWarning(
-                            "RabbitMQ connection attempt {Attempt} failed. Retrying in {Delay}s. Error: {Error}",
+                            "RabbitMQ connection attempt {Attempt}/10 failed. " +
+                            "Retrying in {Delay}s. Error: {Error}",
                             attempt,delay.TotalSeconds,ex.Message)
                 );
 

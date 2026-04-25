@@ -13,7 +13,6 @@ namespace NINJA.RabbitMQ.Subscriber
         static async Task Main(string[] args)
         {
             var builder = Host.CreateApplicationBuilder(args);
-            builder.Configuration.AddJsonFile("appsettings.json",optional: false,reloadOnChange: true);
 
             builder.Services.AddOptions<RabbitMqSettings>().BindConfiguration(RabbitMqSettings.SectionName).ValidateOnStart();
             builder.Services.AddSingleton<IRabbitMqConnection,RabbitMqConnection>();
@@ -30,9 +29,12 @@ namespace NINJA.RabbitMQ.Subscriber
             // the sync dispose path cannot handle IAsyncDisposable-only services.
             await using var scope = host.Services.CreateAsyncScope();
             var weatherService = scope.ServiceProvider.GetRequiredService<IWeatherForecastService>();
+            using var cts = new CancellationTokenSource();
+            Console.CancelKeyPress  += (_, e) => { e.Cancel = true; cts.Cancel(); };
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => cts.Cancel();
 
             Console.WriteLine("Starting RabbitMQ Subscriber...");
-            Console.WriteLine("Press any key to stop.");
+            Console.WriteLine("Press Ctrl+C or send SIGTERM to stop.");
 
             // Each GetRequiredService<IMessageConsumer>() returns a fresh transient instance
             // so every consumer owns its own AMQP channel / stream connection.
@@ -145,7 +147,11 @@ namespace NINJA.RabbitMQ.Subscriber
             Console.WriteLine("  [AMQP]   critical-orders.dlq");
             Console.WriteLine("  [TRACE]  tracer-qu  ← amq.rabbitmq.trace / publish.amq.direct  (firehose)");
 
-            Console.ReadKey();
+            // Block until Ctrl+C or SIGTERM fires the CancellationToken.
+            try { await Task.Delay(Timeout.Infinite, cts.Token); }
+            catch (OperationCanceledException) { /* expected on shutdown */ }
+
+            Console.WriteLine("Shutdown signal received — stopping consumers...");
 
             // StopConsuming() delegates to DisposeAsync() — each consumer does a
             // graceful protocol-level shutdown before releasing its connection.

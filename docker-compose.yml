@@ -1,0 +1,150 @@
+services:
+
+  # ─── RabbitMQ node 1 (cluster leader candidate) ────────────────────────────
+  rabbitmq1:
+    image: rabbitmq:3.13-management
+    hostname: rabbitmq1                  # node name becomes rabbit@rabbitmq1
+    container_name: rabbitmq1
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "NINJA_CLUSTER_ERLANG_COOKIE"
+      RABBITMQ_DEFAULT_USER:  guest
+      RABBITMQ_DEFAULT_PASS:  guest
+      RABBITMQ_DEFAULT_VHOST: /
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - rabbitmq1_data:/var/lib/rabbitmq
+    ports:
+      - "5672:5672"      # AMQP  (host → node 1)
+      - "15672:15672"    # Management UI  → http://localhost:15672
+      - "5552:5552"      # RabbitMQ Stream protocol
+    networks:
+      - rabbitmq_net
+    healthcheck:
+      test:         ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval:     30s
+      timeout:      15s   # check_port_connectivity tests each port — allow more time
+      retries:      5
+      start_period: 60s   # give the broker time to start all listeners   # give the broker time to boot before the first check
+
+  # ─── RabbitMQ node 2 ────────────────────────────────────────────────────────
+  rabbitmq2:
+    image: rabbitmq:3.13-management
+    hostname: rabbitmq2
+    container_name: rabbitmq2
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "NINJA_CLUSTER_ERLANG_COOKIE"
+      RABBITMQ_DEFAULT_USER:  guest
+      RABBITMQ_DEFAULT_PASS:  guest
+      RABBITMQ_DEFAULT_VHOST: /
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - rabbitmq2_data:/var/lib/rabbitmq
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+      - "5553:5552"
+    networks:
+      - rabbitmq_net
+    depends_on:
+      rabbitmq1:
+        condition: service_healthy
+    # healthcheck must be defined so other services can use condition: service_healthy on this node
+    healthcheck:
+      test:         ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval:     30s
+      timeout:      15s   # check_port_connectivity tests each port — allow more time
+      retries:      5
+      start_period: 60s   # give the broker time to start all listeners
+
+  # ─── RabbitMQ node 3 ────────────────────────────────────────────────────────
+  rabbitmq3:
+    image: rabbitmq:3.13-management
+    hostname: rabbitmq3
+    container_name: rabbitmq3
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "NINJA_CLUSTER_ERLANG_COOKIE"
+      RABBITMQ_DEFAULT_USER:  guest
+      RABBITMQ_DEFAULT_PASS:  guest
+      RABBITMQ_DEFAULT_VHOST: /
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - rabbitmq3_data:/var/lib/rabbitmq
+    ports:
+      - "5674:5672"
+      - "15674:15672"
+      - "5554:5552"
+    networks:
+      - rabbitmq_net
+    depends_on:
+      rabbitmq1:
+        condition: service_healthy
+    healthcheck:
+      test:         ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval:     30s
+      timeout:      15s   # check_port_connectivity tests each port — allow more time
+      retries:      5
+      start_period: 60s   # give the broker time to start all listeners
+
+  # ─── Producer API ────────────────────────────────────────────────────────────
+  producer:
+    build:
+      context: .
+      dockerfile: NINJA.RabbitMQ.Producer.API/Dockerfile
+    container_name: producer
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      RabbitMQ__HostName:    rabbitmq1
+      RabbitMQ__UserName:    guest
+      RabbitMQ__Password:    guest
+      RabbitMQ__VirtualHost: /
+      RabbitMQ__Port:        5672
+    networks:
+      - rabbitmq_net
+    depends_on:
+      rabbitmq1:
+        condition: service_healthy
+      rabbitmq2:
+        condition: service_healthy
+      rabbitmq3:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── Subscriber ──────────────────────────────────────────────────────────────
+  subscriber:
+    build:
+      context: .
+      dockerfile: NINJA.RabbitMQ.Subscriber/Dockerfile
+    container_name: subscriber
+    environment:
+      RabbitMQ__HostName:    rabbitmq1
+      RabbitMQ__UserName:    guest
+      RabbitMQ__Password:    guest
+      RabbitMQ__VirtualHost: /
+      RabbitMQ__Port:        5672
+      RabbitMQ__StreamPort:  5552
+    networks:
+      - rabbitmq_net
+    depends_on:
+      rabbitmq1:
+        condition: service_healthy
+      rabbitmq2:
+        condition: service_healthy
+      rabbitmq3:
+        condition: service_healthy
+    restart: unless-stopped
+
+# ─── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  rabbitmq1_data:
+  rabbitmq2_data:
+  rabbitmq3_data:
+
+# ─── Network ───────────────────────────────────────────────────────────────────
+networks:
+  rabbitmq_net:
+    driver: bridge
