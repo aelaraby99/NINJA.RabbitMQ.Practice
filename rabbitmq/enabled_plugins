@@ -1,1 +1,1 @@
-[rabbitmq_management,rabbitmq_tracing,rabbitmq_stream].
+[rabbitmq_management,rabbitmq_tracing,rabbitmq_stream,rabbitmq_event_exchange,rabbitmq_prometheus].
